@@ -1,0 +1,841 @@
+{
+  "name": "IntelliDoc - API Documentation Generator - V5",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "IntelliDoc - API Documentation Generator",
+        "formDescription": "Enter your GitHub or GitLab repository URL to generate API documentation",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Repository URL",
+              "fieldName": "repoUrl",
+              "placeholder": "https://github.com/username/repository",
+              "requiredField": true
+            }
+          ]
+        },
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "483a672c-011e-4b5e-874f-243a6f634d6c",
+      "name": "Repository Form",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.5,
+      "position": [
+        384,
+        144
+      ],
+      "webhookId": "31e01880-8eeb-4b7d-b39c-e0b561d9b73c"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.fileUrl }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "1874b5f4-fb79-4868-8d24-d9d41a29b410",
+      "name": "Download File Content1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2304,
+        144
+      ],
+      "credentials": {
+        "githubApi": {
+          "id": "RnRxoi1gnqHuUA82",
+          "name": "GitHub account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * =========================================================\n * UNIVERSAL ROUTE + FULL DEPENDENCY RESOLVER\n * =========================================================\n *\n * FEATURES:\n * ---------------------------------------------------------\n * ✅ Express\n * ✅ NestJS\n * ✅ Fastify\n * ✅ Next.js API\n * ✅ Koa\n * ✅ Hapi\n * ✅ Adonis\n * ✅ Laravel (basic)\n * ✅ Django / Flask / FastAPI\n *\n * ✅ Recursive dependency walking\n * ✅ Controllers\n * ✅ Services\n * ✅ Repositories\n * ✅ Middleware\n * ✅ Barrel exports (index.js)\n * ✅ Global app files\n * ✅ Config files\n * ✅ Environment files\n * ✅ package.json\n *\n * INPUT:\n * ---------------------------------------------------------\n * items[] = all repository files\n *\n * REQUIRED STRUCTURE:\n * ---------------------------------------------------------\n * [\n *   {\n *     fileName,\n *     filePath,\n *     fileUrl,\n *     fileContent\n *   }\n * ]\n *\n * OUTPUT:\n * ---------------------------------------------------------\n * [\n *   {\n *     route,\n *     routePath,\n *     routeContent,\n *     relatedFiles:[]\n *   }\n * ]\n */\n\nconst files = $input.all().map(i => i.json);\n\n/**\n * =========================================================\n * CONFIG\n * =========================================================\n */\n\nconst ROUTE_PATTERNS = [\n  /routes?\\//i,\n  /router/i,\n  /api/i,\n  /controllers?/i,\n];\n\nconst CODE_EXTENSIONS = [\n  '.js',\n  '.ts',\n  '.jsx',\n  '.tsx',\n  '.mjs',\n  '.cjs',\n  '.py',\n  '.php',\n  '.java',\n  '.go',\n  '.rb',\n  '.rs',\n  '.cs',\n];\n\nconst ROOT_FILES = [\n  'app.js',\n  'app.ts',\n  'server.js',\n  'server.ts',\n  'index.js',\n  'index.ts',\n  'main.js',\n  'main.ts',\n  '.env',\n  '.env.local',\n  '.env.example',\n  'package.json',\n  'tsconfig.json',\n  'vite.config.js',\n  'vite.config.ts',\n  'next.config.js',\n  'nuxt.config.js',\n];\n\n/**\n * =========================================================\n * HELPERS\n * =========================================================\n */\n\nfunction normalizePath(path = '') {\n  return path.replace(/\\\\/g, '/');\n}\n\nfunction isCodeFile(path = '') {\n  return CODE_EXTENSIONS.some(ext =>\n    path.endsWith(ext)\n  );\n}\n\nfunction removeExtension(path = '') {\n  return path.replace(/\\.[^/.]+$/, '');\n}\n\nfunction getFileByPath(path = '') {\n\n  path = normalizePath(path);\n\n  return files.find(\n    f => normalizePath(f.filePath) === path\n  );\n}\n\nfunction fileExists(path = '') {\n  return !!getFileByPath(path);\n}\n\n/**\n * =========================================================\n * RESOLVE RELATIVE IMPORTS\n * =========================================================\n */\n\nfunction resolveRelative(baseFile, importPath) {\n\n  importPath = normalizePath(importPath);\n\n  /**\n   * Skip node_modules\n   */\n\n  if (!importPath.startsWith('.')) {\n    return null;\n  }\n\n  const baseDir =\n    normalizePath(baseFile.filePath)\n      .split('/')\n      .slice(0, -1)\n      .join('/');\n\n  const combined =\n    normalizePath(baseDir + '/' + importPath);\n\n  const parts = [];\n\n  for (const part of combined.split('/')) {\n\n    if (!part || part === '.') {\n      continue;\n    }\n\n    if (part === '..') {\n      parts.pop();\n    } else {\n      parts.push(part);\n    }\n  }\n\n  const finalPath = parts.join('/');\n\n  const possible = [];\n\n  /**\n   * Direct\n   */\n\n  possible.push(finalPath);\n\n  /**\n   * Extension attempts\n   */\n\n  for (const ext of CODE_EXTENSIONS) {\n    possible.push(finalPath + ext);\n  }\n\n  /**\n   * index.js / index.ts\n   */\n\n  for (const ext of CODE_EXTENSIONS) {\n    possible.push(finalPath + '/index' + ext);\n  }\n\n  for (const p of possible) {\n\n    if (fileExists(p)) {\n      return p;\n    }\n  }\n\n  return null;\n}\n\n/**\n * =========================================================\n * EXTRACT IMPORTS\n * =========================================================\n */\n\nfunction extractImports(content = '') {\n\n  const imports = [];\n\n  const patterns = [\n\n    /**\n     * require()\n     */\n\n    /require\\s*\\(\\s*['\"`](.*?)['\"`]\\s*\\)/g,\n\n    /**\n     * import x from ''\n     */\n\n    /from\\s+['\"`](.*?)['\"`]/g,\n\n    /**\n     * import ''\n     */\n\n    /import\\s+['\"`](.*?)['\"`]/g,\n  ];\n\n  for (const regex of patterns) {\n\n    let match;\n\n    while ((match = regex.exec(content)) !== null) {\n\n      imports.push(match[1]);\n    }\n  }\n\n  return [...new Set(imports)];\n}\n\n/**\n * =========================================================\n * EXTRACT IDENTIFIERS\n * =========================================================\n */\n\nfunction extractUsedIdentifiers(content = '') {\n\n  const names = new Set();\n\n  /**\n   * AuthController.login\n   */\n\n  const dotRegex =\n    /([A-Z][A-Za-z0-9_]+)\\s*\\./g;\n\n  let match;\n\n  while ((match = dotRegex.exec(content)) !== null) {\n    names.add(match[1]);\n  }\n\n  /**\n   * UserService\n   * AuthController\n   */\n\n  const wordRegex =\n    /\\b([A-Z][A-Za-z0-9_]+(?:Service|Controller|Middleware|Repository))\\b/g;\n\n  while ((match = wordRegex.exec(content)) !== null) {\n    names.add(match[1]);\n  }\n\n  return [...names];\n}\n\n/**\n * =========================================================\n * RESOLVE BARREL EXPORTS\n * =========================================================\n */\n\nfunction resolveBarrelExports(\n  barrelFile,\n  requestedNames = []\n) {\n\n  const results = [];\n\n  const content =\n    barrelFile.fileContent || '';\n\n  /**\n   * CommonJS\n   */\n\n  const requireRegex =\n    /const\\s+(\\w+)\\s*=\\s*require\\s*\\(\\s*['\"`](.*?)['\"`]\\s*\\)/g;\n\n  let match;\n\n  while ((match = requireRegex.exec(content)) !== null) {\n\n    const exportName = match[1];\n    const importPath = match[2];\n\n    if (\n      requestedNames.length &&\n      !requestedNames.includes(exportName)\n    ) {\n      continue;\n    }\n\n    const resolved =\n      resolveRelative(\n        barrelFile,\n        importPath\n      );\n\n    if (resolved) {\n      results.push(resolved);\n    }\n  }\n\n  /**\n   * export { X } from './x'\n   */\n\n  const exportRegex =\n    /export\\s+\\{\\s*(\\w+)\\s*\\}\\s+from\\s+['\"`](.*?)['\"`]/g;\n\n  while ((match = exportRegex.exec(content)) !== null) {\n\n    const exportName = match[1];\n    const importPath = match[2];\n\n    if (\n      requestedNames.length &&\n      !requestedNames.includes(exportName)\n    ) {\n      continue;\n    }\n\n    const resolved =\n      resolveRelative(\n        barrelFile,\n        importPath\n      );\n\n    if (resolved) {\n      results.push(resolved);\n    }\n  }\n\n  return results;\n}\n\n/**\n * =========================================================\n * GET ROOT / GLOBAL FILES\n * =========================================================\n */\n\nfunction getRootFiles() {\n\n  return files.filter(file => {\n\n    const path =\n      normalizePath(file.filePath);\n\n    const name =\n      path.split('/').pop();\n\n    /**\n     * Root files\n     */\n\n    if (ROOT_FILES.includes(name)) {\n      return true;\n    }\n\n    /**\n     * Config folders\n     */\n\n    if (\n      path.startsWith('config/') ||\n      path.includes('/config/')\n    ) {\n      return true;\n    }\n\n    /**\n     * Middleware folders\n     */\n\n    if (\n      path.includes('/middleware/') ||\n      path.includes('/middlewares/')\n    ) {\n      return true;\n    }\n\n    /**\n     * Utils / helpers\n     */\n\n    if (\n      path.includes('/utils/') ||\n      path.includes('/helpers/')\n    ) {\n      return true;\n    }\n\n    return false;\n  });\n}\n\n/**\n * =========================================================\n * RECURSIVE DEPENDENCY WALKER\n * =========================================================\n */\n\nfunction collectDependencies(entryFile) {\n\n  const visited = new Set();\n\n  const relatedFiles = [];\n\n  function walk(filePath) {\n\n    if (!filePath) {\n      return;\n    }\n\n    filePath = normalizePath(filePath);\n\n    if (visited.has(filePath)) {\n      return;\n    }\n\n    visited.add(filePath);\n\n    const file =\n      getFileByPath(filePath);\n\n    if (!file) {\n      return;\n    }\n\n    /**\n     * Skip entry route itself\n     */\n\n    if (filePath !== entryFile.filePath) {\n\n      relatedFiles.push({\n        fileName: file.fileName,\n        filePath: file.filePath,\n        fileUrl: file.fileUrl,\n        fileContent: file.fileContent,\n      });\n    }\n\n    const imports =\n      extractImports(\n        file.fileContent || ''\n      );\n\n    const usedIdentifiers =\n      extractUsedIdentifiers(\n        file.fileContent || ''\n      );\n\n    for (const imp of imports) {\n\n      const resolved =\n        resolveRelative(\n          file,\n          imp\n        );\n\n      if (!resolved) {\n        continue;\n      }\n\n      /**\n       * Handle barrel exports\n       */\n\n      if (\n        resolved.endsWith('/index.js') ||\n        resolved.endsWith('/index.ts')\n      ) {\n\n        const barrelFile =\n          getFileByPath(resolved);\n\n        if (!barrelFile) {\n          continue;\n        }\n\n        const scoped =\n          resolveBarrelExports(\n            barrelFile,\n            usedIdentifiers\n          );\n\n        if (scoped.length) {\n\n          for (const s of scoped) {\n            walk(s);\n          }\n\n          continue;\n        }\n      }\n\n      walk(resolved);\n    }\n  }\n\n  walk(entryFile.filePath);\n\n  /**\n   * Remove duplicates\n   */\n\n  const unique = [];\n\n  const map = new Set();\n\n  for (const f of relatedFiles) {\n\n    if (map.has(f.filePath)) {\n      continue;\n    }\n\n    map.add(f.filePath);\n\n    unique.push(f);\n  }\n\n  return unique;\n}\n\n/**\n * =========================================================\n * DETECT ROUTE FILES\n * =========================================================\n */\n\nfunction isRouteFile(file) {\n\n  const path =\n    normalizePath(file.filePath);\n\n  if (!isCodeFile(path)) {\n    return false;\n  }\n\n  const looksLikeRoute =\n    ROUTE_PATTERNS.some(r => r.test(path));\n\n  if (!looksLikeRoute) {\n    return false;\n  }\n\n  const content =\n    file.fileContent || '';\n\n  /**\n   * Express\n   */\n\n  if (\n    /router\\.(get|post|put|delete|patch)/.test(content)\n  ) {\n    return true;\n  }\n\n  /**\n   * Fastify\n   */\n\n  if (\n    /fastify\\.(get|post|put|delete|patch)/.test(content)\n  ) {\n    return true;\n  }\n\n  /**\n   * NestJS\n   */\n\n  if (\n    /@(Get|Post|Put|Delete|Patch)\\(/.test(content)\n  ) {\n    return true;\n  }\n\n  /**\n   * Flask / FastAPI\n   */\n\n  if (\n    /@(app|router)\\.(get|post|put|delete|patch)/.test(content)\n  ) {\n    return true;\n  }\n\n  return false;\n}\n\n/**\n * =========================================================\n * PROCESS ROUTES\n * =========================================================\n */\n\nconst routeFiles =\n  files.filter(isRouteFile);\n\nconst globalFiles =\n  getRootFiles();\n\nconst results = [];\n\nfor (const routeFile of routeFiles) {\n\n  const dependencies =\n    collectDependencies(routeFile);\n\n  /**\n   * Merge global + route deps\n   */\n\n  const merged = [\n    ...globalFiles,\n    ...dependencies,\n  ];\n\n  /**\n   * Remove duplicates\n   */\n\n  const unique = [];\n\n  const map = new Set();\n\n  for (const f of merged) {\n\n    if (map.has(f.filePath)) {\n      continue;\n    }\n\n    map.add(f.filePath);\n\n    unique.push(f);\n  }\n\n  results.push({\n    route: routeFile.fileUrl,\n    routePath: routeFile.filePath,\n    routeContent: routeFile.fileContent,\n    relatedFiles: unique,\n  });\n}\n\n/**\n * =========================================================\n * OUTPUT\n * =========================================================\n */\n\nconst startedAt = $('Validate Repository URL').first().json.workflowStartTime;\nconst totalSec = ((Date.now() - startedAt) / 1000).toFixed(2);\n\nreturn [\n  {\n    json: {\n      scanTime: totalSec,\n      success: true,\n      totalRoutes: results.length,\n      totalGlobalFiles: globalFiles.length,\n      routes: results,\n      routeOptions:  results.map(route => ({\n      option: route.routePath,\n      }))\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2752,
+        144
+      ],
+      "id": "c36c302e-03cc-4a81-bb8e-78edba538ea1",
+      "name": "Categorized routes"
+    },
+    {
+      "parameters": {
+        "jsCode": "const repoUrl = $input.first().json.repoUrl;\n\nconst staticData =\n  $getWorkflowStaticData('global');\n\nObject.keys(staticData).forEach(key => {\n  delete staticData[key];\n});\n\nif (!repoUrl) {\n  return [{ json: { error: 'Repository URL is required', valid: false } }];\n}\n\n// Validate GitHub or GitLab URL\nconst githubRegex =\n  /^https?:\\/\\/(www\\.)?github\\.com\\/([\\w-]+)\\/([\\w.-]+?)(\\.git)?\\/?$/;\n\nconst githubMatch = repoUrl.match(githubRegex);\n\nif (githubMatch) {\n  return [{\n    json: {\n      valid: true,\n      platform: 'github',\n      owner: githubMatch[2],\n      repo: githubMatch[3],\n      repoUrl: repoUrl,\n      workflowStartTime: Date.now()\n    }\n  }];\n} else {\n  return [{\n    json: {\n      error: 'Invalid repository URL. Must be a valid GitHub or GitLab repository URL.',\n      valid: false\n    }\n  }];\n}"
+      },
+      "id": "aee1c4b9-c077-4133-84a3-7f179c35d81f",
+      "name": "Validate Repository URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        608,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.platform === \"github\" ? \"https://api.github.com/repos/\" + $json.owner + \"/\" + $json.repo : \"https://gitlab.com/api/v4/projects/\" + encodeURIComponent($json.owner + \"/\" + $json.repo) }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "options": {
+          "response": {
+            "response": {}
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "9aca0ee8-04bc-4c68-b532-f6dcee9646ed",
+      "name": "Fetch Repository Metadata",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        832,
+        144
+      ],
+      "alwaysOutputData": false,
+      "credentials": {
+        "githubApi": {
+          "id": "RnRxoi1gnqHuUA82",
+          "name": "GitHub account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{\"https://api.github.com/repos/\" +\n      $('Validate Repository URL').first().json.owner +\n      \"/\" +\n      $('Validate Repository URL').first().json.repo +\n      \"/git/trees/\" +\n      encodeURIComponent($json.default_branch || \"main\") +\n      \"?recursive=1\"\n}}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "options": {
+          "response": {
+            "response": {}
+          }
+        }
+      },
+      "id": "ff02cf07-74a7-401e-aca3-4668094f1442",
+      "name": "Fetch Repository Tree",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1056,
+        144
+      ],
+      "alwaysOutputData": false,
+      "credentials": {
+        "githubApi": {
+          "id": "RnRxoi1gnqHuUA82",
+          "name": "GitHub account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const prevData = $('Validate Repository URL').first().json;\nconst branch = $('Fetch Repository Metadata').first().json;\n\nconst { platform, owner, repo, defaultBranch } = prevData;\n\n\nlet tree = [];\n\n/**\n * ------------------------------------------------\n * Normalize GitHub Repository Tree\n * ------------------------------------------------\n */\n\nif (platform === 'github') {\n  const treeData = $input.first().json;\n  tree = treeData.tree || [];\n}\n\n\n/**\n * ------------------------------------------------\n * Validation\n * ------------------------------------------------\n */\n\nif (!Array.isArray(tree) || tree.length === 0) {\n  throw new Error(JSON.stringify({\n    success: false,\n    error: 'Unable to fetch repository tree',\n    platform: platform\n  }));\n}\n\n\n/**\n * ------------------------------------------------\n * Dependency Patterns\n * ------------------------------------------------\n */\n\nconst dependencyPatterns = [\n  'package.json',\n  'pnpm-lock.yaml',\n  'requirements.txt',\n  'pipfile',\n  'pyproject.toml',\n  'gemfile',\n  'composer.json',\n  'go.mod',\n  'pom.xml',\n  'build.gradle',\n  'cargo.toml'\n];\n\n\n/**\n * ------------------------------------------------\n * Backend Extensions\n * ------------------------------------------------\n */\n\nconst backendExtensions = [\n  '.js',\n  '.ts',\n  '.jsx',\n  '.tsx',\n  '.mjs',\n  '.cjs',\n\n  '.py',\n\n  '.rb',\n\n  '.php',\n\n  '.go',\n\n  '.java',\n\n  '.cs',\n\n  '.cpp',\n  '.cc',\n  '.cxx',\n  '.c',\n\n  '.rs'\n];\n\n\n/**\n * ------------------------------------------------\n * Backend Folder Keywords\n * ------------------------------------------------\n */\n\nconst backendFolderPatterns = [\n\n  // Common\n  'route',\n  'routes',\n  'router',\n  'routers',\n\n  'controller',\n  'controllers',\n\n  'service',\n  'services',\n\n  'middleware',\n  'middlewares',\n\n  'model',\n  'models',\n\n  'repository',\n  'repositories',\n\n  'schema',\n  'schemas',\n\n  'validator',\n  'validators',\n\n  'handler',\n  'handlers',\n\n  'endpoint',\n  'endpoints',\n\n  'api',\n  'apis',\n\n  'module',\n  'modules',\n\n  'database',\n  'db',\n\n  'lib',\n  'utils',\n\n  // Ruby on Rails\n  'app/controllers',\n  'app/models',\n  'app/services',\n  'app/jobs',\n  'app/helpers',\n  'app/mailers',\n  'app/channels',\n  'config/routes',\n  'concerns',\n\n  // Django / Python\n  'views',\n  'serializers',\n\n  // Laravel\n  'http/controllers',\n\n  // Java / Spring\n  'entity',\n  'entities'\n];\n\n\n/**\n * ------------------------------------------------\n * Helpers\n * ------------------------------------------------\n */\n\nfunction normalizePath(path = '') {\n\n  return path\n    .replace(/\\\\/g, '/')\n    .toLowerCase();\n}\n\n\nfunction hasBackendExtension(path) {\n\n  return backendExtensions.some(ext =>\n    path.endsWith(ext)\n  );\n}\n\n\nfunction includesFolder(path, folders) {\n\n  return folders.some(folder =>\n\n    path.includes(`/${folder}/`) ||\n    path.startsWith(`${folder}/`) ||\n\n    path.includes(`/${folder}.`) ||\n    path.includes(`.${folder}.`) ||\n\n    path.includes(folder)\n  );\n}\n\n\n/**\n * ------------------------------------------------\n * Storage\n * ------------------------------------------------\n */\n\nconst dependencyFiles = [];\nconst codeFiles = [];\n\nconst categorizedFiles = {\n  routes: [],\n  controllers: [],\n  services: [],\n  middlewares: [],\n  models: [],\n  repositories: [],\n  schemas: [],\n  validators: [],\n  handlers: [],\n  utils: [],\n  database: [],\n  modules: [],\n  other: []\n};\n\n\n/**\n * ------------------------------------------------\n * Scan Repository Files\n * ------------------------------------------------\n */\n\ntree.forEach(item => {\n\n  const rawPath =\n    item.path ||\n    item.file_path ||\n    item.name ||\n    '';\n\n  const type =\n    item.type ||\n    '';\n\n  // Skip directories\n  if (\n    type === 'tree' ||\n    type === 'dir'\n  ) {\n    return;\n  }\n\n  const path = normalizePath(rawPath);\n\n\n  /**\n   * ------------------------------------------------\n   * Dependency Files\n   * ------------------------------------------------\n   */\n\n  if (\n    dependencyPatterns.some(dep =>\n      path.endsWith(dep)\n    )\n  ) {\n\n    dependencyFiles.push(rawPath);\n  }\n\n\n  /**\n   * ------------------------------------------------\n   * Only process backend source files\n   * ------------------------------------------------\n   */\n\n  if (!hasBackendExtension(path)) {\n    return;\n  }\n\n\n  /**\n   * ------------------------------------------------\n   * Detect architecture patterns\n   * ------------------------------------------------\n   */\n\n  let detected = false;\n\n\n  if (includesFolder(path, ['route', 'routes', 'router', 'routers'])) {\n\n    categorizedFiles.routes.push(rawPath);\n    detected = true;\n  }\n\n  if (includesFolder(path, ['controller', 'controllers'])) {\n\n    categorizedFiles.controllers.push(rawPath);\n    detected = true;\n  }\n\n  if (includesFolder(path, ['service', 'services'])) {\n\n    categorizedFiles.services.push(rawPath);\n    detected = true;\n  }\n\n  if (includesFolder(path, ['middleware', 'middlewares'])) {\n\n    categorizedFiles.middlewares.push(rawPath);\n    detected = true;\n  }\n\n  if (includesFolder(path, ['model', 'models'])) {\n\n    categorizedFiles.models.push(rawPath);\n    detected = true;\n  }\n\n  if (includesFolder(path, ['repository', 'repositories'])) {\n\n    categorizedFiles.repositories.push(rawPath);\n    detected = true;\n  }\n\n  if (includesFolder(path, ['schema', 'schemas'])) {\n\n    categorizedFiles.schemas.push(rawPath);\n    detected = true;\n  }\n\n  if (includesFolder(path, ['validator', 'validators'])) {\n\n    categorizedFiles.validators.push(rawPath);\n    detected = true;\n  }\n\n  if (includesFolder(path, ['handler', 'handlers'])) {\n\n    categorizedFiles.handlers.push(rawPath);\n    detected = true;\n  }\n\n  if (includesFolder(path, ['utils', 'lib'])) {\n\n    categorizedFiles.utils.push(rawPath);\n    detected = true;\n  }\n\n  if (includesFolder(path, ['database', 'db'])) {\n\n    categorizedFiles.database.push(rawPath);\n    detected = true;\n  }\n\n  if (includesFolder(path, ['module', 'modules'])) {\n\n    categorizedFiles.modules.push(rawPath);\n    detected = true;\n  }\n\n\n  /**\n   * ------------------------------------------------\n   * Add to codeFiles\n   * ------------------------------------------------\n   */\n\n  codeFiles.push({\n    path: rawPath,\n    type: type || 'blob',\n    category: detected\n      ? Object.keys(categorizedFiles).find(key =>\n          categorizedFiles[key].includes(rawPath)\n        ) || 'other'\n      : 'other'\n  });\n\n\n  /**\n   * ------------------------------------------------\n   * Uncategorized backend file\n   * ------------------------------------------------\n   */\n\n  if (!detected) {\n\n    categorizedFiles.other.push(rawPath);\n  }\n});\n\n\n/**\n * ------------------------------------------------\n * Remove duplicates\n * ------------------------------------------------\n */\n\nObject.keys(categorizedFiles).forEach(key => {\n\n  categorizedFiles[key] = [\n    ...new Set(categorizedFiles[key])\n  ];\n});\n\n\n/**\n * ------------------------------------------------\n * Final Validation\n * ------------------------------------------------\n */\n\nif (\n  dependencyFiles.length === 0 &&\n  codeFiles.length === 0\n) {\n\n  throw new Error(JSON.stringify({\n    success: false,\n    error: 'No backend files detected',\n    platform: platform\n  }));\n}\n\nconst filePath = dependencyFiles[0];\nconst url = `https://raw.githubusercontent.com/${owner}/${repo}/${branch.default_branch}/${filePath}`\n\n\n\n/**\n * ------------------------------------------------\n * Output\n * ------------------------------------------------\n */\n\nreturn [{\n  json: {\n    success: true,\n    platform: platform,\n    owner: owner,\n    repo: repo,\n    defaultBranch: branch.default_branch,\n    totalTreeItems: tree.length,\n\n    dependencyFiles: [\n      ...new Set(dependencyFiles)\n    ],\n    dependencyFileUrl: url,\n    dependencyFileName: filePath,\n\n    totalDependencyFiles: dependencyFiles.length,\n\n    totalCodeFiles: codeFiles.length,\n\n    // FULL code files with categories\n    codeFiles,\n\n    // categorized grouped files\n    categorizedFiles,\n\n    stats: {\n      routes: categorizedFiles.routes.length,\n      controllers: categorizedFiles.controllers.length,\n      services: categorizedFiles.services.length,\n      middlewares: categorizedFiles.middlewares.length,\n      models: categorizedFiles.models.length,\n      repositories: categorizedFiles.repositories.length,\n      schemas: categorizedFiles.schemas.length,\n      validators: categorizedFiles.validators.length,\n      handlers: categorizedFiles.handlers.length,\n      modules: categorizedFiles.modules.length,\n      utils: categorizedFiles.utils.length,\n      database: categorizedFiles.database.length,\n      other: categorizedFiles.other.length\n    }\n  }\n}];"
+      },
+      "id": "2485db1e-d6d1-4757-9cd2-1ed326ee03a7",
+      "name": "Extract File Paths",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.dependencyFileUrl }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "90c66039-5960-4825-b8bf-054d19ab6b77",
+      "name": "Download Dependency File",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1504,
+        144
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "githubApi": {
+          "id": "RnRxoi1gnqHuUA82",
+          "name": "GitHub account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst extractFile = $('Extract File Paths').first().json;\nconst validateData = $('Validate Repository URL').first().json;\n\nconst { owner, repo, codeFiles, defaultBranch } = extractFile\nconst { language, framework } = $input.first().json.output\nconst { platform } = validateData;\n\nif (!codeFiles || codeFiles.length === 0) {\n  return [];\n}\n\n// Create an item for each code file with all metadata\n// Note: File content will be downloaded in the next node\nconst items = codeFiles.map(object => {\n  const filePath = object.path\n  const fileUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${defaultBranch}/${filePath}`\n    \n  \n  const fileName = filePath.split(\"/\").pop();\n  \n  return {\n    json: {\n      filePath,\n      fileName,\n      fileUrl\n    }\n  };\n});\n\nreturn items;"
+      },
+      "id": "2fb23f2a-5eed-48c5-b6f1-6bb3316d41ff",
+      "name": "Split Code Files",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2080,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1",
+              "name": "fileName",
+              "value": "={{ $(\"Split Code Files\").item.json.fileName }}",
+              "type": "string"
+            },
+            {
+              "id": "2",
+              "name": "filePath",
+              "value": "={{ $(\"Split Code Files\").item.json.filePath }}",
+              "type": "string"
+            },
+            {
+              "id": "3",
+              "name": "fileUrl",
+              "value": "={{ $(\"Split Code Files\").item.json.fileUrl }}",
+              "type": "string"
+            },
+            {
+              "id": "4",
+              "name": "fileContent",
+              "value": "={{ $json.data }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "03b27330-dd34-481e-931b-2f278b66c35c",
+      "name": "Prepare For Analysis",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2528,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "resume": "form",
+        "formTitle": "Create API documentation for route",
+        "formDescription": "=<p>\nAnalysis completed in <strong>{{ $json.scanTime }} seconds</strong>. We detected a <strong>{{ $('Detect language and Framework').first().json.output.framework }}</strong> application built with <strong>{{ $('Detect language and Framework').first().json.output.language }}</strong> and identified <strong>{{ $json.totalRoutes }}</strong> API route modules ready for documentation.\n</p>\n\n<p>\n👇 Select a route module from the dropdown below to continue.\n</p>",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Select Route",
+              "fieldType": "dropdown",
+              "defaultValue": "0",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "={{ $('Categorized routes').item.json.routes[0].routePath }}"
+                  },
+                  {
+                    "option": "={{ $('Categorized routes').item.json.routes[1].routePath }}"
+                  },
+                  {
+                    "option": "={{ $('Categorized routes').item.json.routes[2]?.routePath || \"\"}}"
+                  },
+                  {
+                    "option": "={{ $('Categorized routes').item.json.routes[3]?.routePath || \"\" }}"
+                  },
+                  {
+                    "option": "={{ $('Categorized routes').item.json.routes[4]?.routePath || \"\"}}"
+                  },
+                  {
+                    "option": "={{ $('Categorized routes').item.json.routes[5]?.routePath || \"\" }}"
+                  },
+                  {
+                    "option": "={{ $('Categorized routes').item.json.routes[6]?.routePath ?? \"\" }}"
+                  },
+                  {
+                    "option": "={{ $('Categorized routes').item.json.routes[7]?.routePath ?? \"\" }}"
+                  },
+                  {
+                    "option": "={{ $('Categorized routes').item.json.routes[8]?.routePath ?? \"\" }}"
+                  },
+                  {
+                    "option": "={{ $('Categorized routes').item.json.routes[9]?.routePath ?? \"\" }}"
+                  }
+                ]
+              },
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        640,
+        848
+      ],
+      "id": "3a3fdd3f-fc61-40a5-afd5-51528b6fec61",
+      "name": "Select Route Form",
+      "webhookId": "4c749109-b820-4d52-9fff-905cd20a5d90"
+    },
+    {
+      "parameters": {
+        "jsCode": "const selectedRoute = $json[\"Select Route\"];\n\nconst secondFlowStart = Date.now();\n\n// Get routes from \"Categorized routes\" node\nconst categorizedRoutes = $items(\"Categorized routes\")[0].json.routes || [];\n\n// Find matching route object\nconst matchedRoute = categorizedRoutes.find(\n  route => route.routePath === selectedRoute\n);\n\nreturn [\n  {\n    json: {\n      secondFlowStart,\n      ...(matchedRoute || {})\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        864,
+        736
+      ],
+      "id": "c35b4c82-57fc-435c-9c6c-b4f805ed669f",
+      "name": "Fetch Selected route's code"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-3.1-flash-lite",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        1088,
+        896
+      ],
+      "id": "83f351bd-a27c-41de-9703-914568d1acd7",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "myueSO1IZZNScyi6",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "let prevdata = [];\n\ntry {\n  prevdata = $(\"Structure data parser\").all();\n} catch (e) {\n  console.log(\"Previous node not executed\");\n}\n\nfunction extractJson(text) {\n  // Remove markdown wrappers\n  text = text\n    .replace(/```json/gi, \"\")\n    .replace(/```/g, \"\")\n    .trim();\n\n  // Extract first JSON object or array\n  const match = text.match(/\\{[\\s\\S]*\\}|\\[[\\s\\S]*\\]/);\n\n  if (!match) {\n    throw new Error(\"No JSON found\");\n  }\n\n  return match[0];\n}\n\nconst raw =\n  $json.output ||\n  $json.text ||\n  $json.response ||\n  $json.raw ||\n  JSON.stringify($json);\n\ntry {\n  const extracted = extractJson(raw);\n\n  // Parse directly\n  const parsed = JSON.parse(extracted);\n\n  const previousRoutes = prevdata.flatMap(\n    item => item.json?.routes || []\n  );\n\n  const currentRoutes = parsed.routes || [];\n\n  // Merge routes\n  parsed.routes = [\n    ...previousRoutes,\n    ...currentRoutes\n  ];\n\n  return [\n    {\n      json: parsed\n    }\n  ];\n\n} catch (err) {\n  return [\n    {\n      json: {\n        success: false,\n        error: err.message,\n        raw\n      }\n    }\n  ];\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1424,
+        736
+      ],
+      "id": "36feaf0c-c50a-4e12-b9f7-9ab60d64daf2",
+      "name": "Structure data parser"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ========================================\n// WORKFLOW STATIC DATA\n// ========================================\n\nconst staticData = $getWorkflowStaticData('global');\n\n/*\n  Current execution data\n*/\n\nconst current =\n  $input.first().json || {};\n\n/*\n  Initialize storage\n*/\n\nif (!staticData.project) {\n  staticData.project = null;\n}\n\nif (!staticData.routeGroups) {\n  staticData.routeGroups = [];\n}\n\n/*\n  Store project once\n*/\n\nif (!staticData.project && current.project) {\n  staticData.project = current.project;\n}\n\n/*\n  Store ROUTE GROUPS safely\n*/\n\nif (Array.isArray(current.routes)) {\n\n  for (const incomingGroup of current.routes) {\n\n    /*\n      Find existing route group\n    */\n\n    const existingGroup =\n      staticData.routeGroups.find(group =>\n\n        (\n          group.routeFilePath &&\n          incomingGroup.routeFilePath &&\n          group.routeFilePath === incomingGroup.routeFilePath\n        )\n\n        ||\n\n        (\n          group.routeName &&\n          incomingGroup.routeName &&\n          group.routeName === incomingGroup.routeName\n        )\n      );\n\n    /*\n      If route group does not exist\n      create new one\n    */\n\n    if (!existingGroup) {\n\n      staticData.routeGroups.push({\n        ...incomingGroup\n      });\n\n      continue;\n    }\n\n    /*\n      Merge endpoints safely\n    */\n\n    const existingEndpoints =\n      existingGroup.endpoints || [];\n\n    const incomingEndpoints =\n      incomingGroup.endpoints || [];\n\n    for (const endpoint of incomingEndpoints) {\n\n      const exists =\n        existingEndpoints.find(ep =>\n\n          ep.routePath === endpoint.routePath &&\n          ep.method === endpoint.method\n        );\n\n      if (!exists) {\n        existingEndpoints.push(endpoint);\n      }\n    }\n\n    existingGroup.endpoints =\n      existingEndpoints;\n  }\n}\n\n/*\n  FINAL DATA\n*/\n\nconst project =\n  staticData.project || {};\n\nconst routeGroups =\n  staticData.routeGroups || [];\n\n/* =========================\n   FLATTEN ROUTES\n========================= */\n\nconst routes = routeGroups.flatMap(group => {\n\n  return (group.endpoints || []).map(endpoint => ({\n\n    ...endpoint,\n\n    routeName: group.routeName,\n    routeFilePath: group.routeFilePath\n\n  }));\n\n});\n\n/* =========================\n   STATS\n========================= */\n\nconst totalEndpoints =\n  routes.length;\n\nconst totalGroups =\n  routeGroups.length;\n\n/* =========================\n   METHOD COUNTS\n========================= */\n\nconst methodStats = {\n  GET: 0,\n  POST: 0,\n  PUT: 0,\n  DELETE: 0,\n  PATCH: 0\n};\n\nroutes.forEach(route => {\n\n  const method =\n    (route.method || \"\").toUpperCase();\n\n  if (methodStats[method] !== undefined) {\n    methodStats[method]++;\n  }\n\n});\n\n/* =========================\n   CATEGORY COUNTS\n========================= */\n\nconst categorizedRoutes = {};\n\nrouteGroups.forEach(group => {\n\n  const name =\n    group.routeName || \"unknown\";\n\n  categorizedRoutes[name] = {\n    totalEndpoints:\n      group.endpoints?.length || 0,\n\n    endpoints:\n      group.endpoints || []\n  };\n\n});\n\n/*\n  DEBUG\n*/\n\nconsole.log({\n  totalGroups,\n  totalEndpoints,\n  storedGroups:\n    routeGroups.map(g => g.routeName)\n});\n\n/* =========================\n   METHOD COLORS\n========================= */\n\nfunction methodColor(method = \"\") {\n\n  const m = method.toLowerCase();\n\n  if (m === \"get\") return \"#22c55e\";\n  if (m === \"post\") return \"#3b82f6\";\n  if (m === \"put\") return \"#f59e0b\";\n  if (m === \"delete\") return \"#ef4444\";\n  if (m === \"patch\") return \"#a855f7\";\n\n  return \"#64748b\";\n}\n\n/* =========================\n   SIDEBAR\n========================= */\n\nconst sidebarLinks = routeGroups.map((group, groupIndex) => {\n\n  const endpoints = group.endpoints || [];\n\n  return `\n    <div class=\"sidebar-group\">\n\n      <div class=\"sidebar-group-title\">\n        ${group.routeName.toUpperCase()}\n      </div>\n\n      ${endpoints.map((endpoint, endpointIndex) => {\n\n        const id = `${groupIndex}-${endpointIndex}`;\n\n        return `\n          <a href=\"#route-${id}\" class=\"sidebar-link\">\n\n            <span\n              class=\"sidebar-method\"\n              style=\"background:${methodColor(endpoint.method)}\"\n            >\n              ${endpoint.method}\n            </span>\n\n            <div>\n\n              <div class=\"sidebar-title\">\n                ${endpoint.routePath}\n              </div>\n\n            </div>\n\n          </a>\n        `;\n\n      }).join(\"\")}\n\n    </div>\n  `;\n\n}).join(\"\");\n\n/* =========================\n   ROUTES HTML\n========================= */\n\nconst routesHtml = routeGroups.map((group, groupIndex) => {\n\n  return `\n    <section class=\"group-section\">\n\n      <div class=\"group-header\">\n\n        <div>\n\n          <div class=\"group-title\">\n            ${group.routeName.toUpperCase()} MODULE\n          </div>\n\n          <div class=\"group-subtitle\">\n            ${group.routeFilePath}\n          </div>\n\n        </div>\n\n        <div class=\"group-count\">\n          ${group.endpoints.length} Endpoints\n        </div>\n\n      </div>\n\n      ${group.endpoints.map((route, endpointIndex) => {\n\n        const id = `${groupIndex}-${endpointIndex}`;\n\n        const hasParams = route.params?.length;\n        const hasQuery = route.query?.length;\n        const hasRequestBody = route.requestBody?.length;\n        const hasResponse = route.response?.length;\n        const hasErrors = route.errorHandling?.length;\n        const hasMiddleware = route.middleware?.length;\n\n        return `\n          <section class=\"endpoint\" id=\"route-${id}\">\n\n            <div class=\"endpoint-bar\">\n\n              <div class=\"endpoint-main\">\n\n                <span\n                  class=\"method-badge\"\n                  style=\"background:${methodColor(route.method)}\"\n                >\n                  ${route.method}\n                </span>\n\n                <div>\n\n                  <div class=\"route-path\">\n                    ${route.routePath}\n                  </div>\n\n                  <div class=\"route-description\">\n                    ${route.description || \"\"}\n                  </div>\n\n                </div>\n\n              </div>\n\n            </div>\n\n            <!-- QUICK INFO -->\n\n            <div class=\"quick-grid\">\n\n              <div class=\"quick-card\">\n\n                <div class=\"quick-label\">\n                  Authentication\n                </div>\n\n                <div class=\"quick-value\">\n                  ${\n                    route.authentication?.required\n                      ? route.authentication.type || \"Protected\"\n                      : \"Public\"\n                  }\n                </div>\n\n              </div>\n\n              <div class=\"quick-card\">\n\n                <div class=\"quick-label\">\n                  Authorization\n                </div>\n\n                <div class=\"quick-value\">\n                  ${\n                    route.authorization?.required\n                      ? route.authorization.roles?.join(\", \") || \"Role Based\"\n                      : \"None\"\n                  }\n                </div>\n\n              </div>\n\n              ${\n                hasMiddleware\n                  ? `\n                    <div class=\"quick-card\">\n\n                      <div class=\"quick-label\">\n                        Middleware\n                      </div>\n\n                      <div class=\"quick-value\">\n                        ${route.middleware.join(\", \")}\n                      </div>\n\n                    </div>\n                  `\n                  : \"\"\n              }\n\n              ${\n                route.relatedFilesUsed?.length\n                  ? `\n                    <div class=\"quick-card\">\n\n                      <div class=\"quick-label\">\n                        Related Files\n                      </div>\n\n                      <div class=\"quick-value\">\n                        ${route.relatedFilesUsed.join(\"<br/>\")}\n                      </div>\n\n                    </div>\n                  `\n                  : \"\"\n              }\n\n            </div>\n\n            <div class=\"sections-grid\">\n\n              ${\n                hasParams\n                  ? `\n                    <div class=\"section\">\n\n                      <div class=\"section-title\">\n                        Route Parameters\n                      </div>\n\n                      <div class=\"table-wrapper\">\n\n                        <table>\n\n                          <thead>\n                            <tr>\n                              <th>Name</th>\n                              <th>Type</th>\n                              <th>Required</th>\n                            </tr>\n                          </thead>\n\n                          <tbody>\n\n                            ${route.params.map(param => `\n                              <tr>\n                                <td>${param.name}</td>\n                                <td>${param.type}</td>\n                                <td>${param.required ? \"Yes\" : \"No\"}</td>\n                              </tr>\n                            `).join(\"\")}\n\n                          </tbody>\n\n                        </table>\n\n                      </div>\n\n                    </div>\n                  `\n                  : \"\"\n              }\n\n              ${\n                hasQuery\n                  ? `\n                    <div class=\"section\">\n\n                      <div class=\"section-title\">\n                        Query Parameters\n                      </div>\n\n                      <div class=\"table-wrapper\">\n\n                        <table>\n\n                          <thead>\n                            <tr>\n                              <th>Name</th>\n                              <th>Type</th>\n                              <th>Required</th>\n                            </tr>\n                          </thead>\n\n                          <tbody>\n\n                            ${route.query.map(query => `\n                              <tr>\n                                <td>${query.name}</td>\n                                <td>${query.type}</td>\n                                <td>${query.required ? \"Yes\" : \"No\"}</td>\n                              </tr>\n                            `).join(\"\")}\n\n                          </tbody>\n\n                        </table>\n\n                      </div>\n\n                    </div>\n                  `\n                  : \"\"\n              }\n\n              ${\n                hasRequestBody\n                  ? `\n                    <div class=\"section\">\n\n                      <div class=\"section-title\">\n                        Request Body\n                      </div>\n\n                      <div class=\"table-wrapper\">\n\n                        <table>\n\n                          <thead>\n                            <tr>\n                              <th>Field</th>\n                              <th>Type</th>\n                              <th>Required</th>\n                            </tr>\n                          </thead>\n\n                          <tbody>\n\n                            ${route.requestBody.map(body => `\n                              <tr>\n                                <td>${body.name}</td>\n                                <td>${body.type}</td>\n                                <td>${body.required ? \"Yes\" : \"No\"}</td>\n                              </tr>\n                            `).join(\"\")}\n\n                          </tbody>\n\n                        </table>\n\n                      </div>\n\n                    </div>\n                  `\n                  : \"\"\n              }\n\n              ${\n                hasResponse\n                  ? `\n                    <div class=\"section\">\n\n                      <div class=\"section-title\">\n                        Responses\n                      </div>\n\n                      <div class=\"table-wrapper\">\n\n                        <table>\n\n                          <thead>\n                            <tr>\n                              <th>Status</th>\n                              <th>Message</th>\n                            </tr>\n                          </thead>\n\n                          <tbody>\n\n                            ${route.response.map(res => `\n                              <tr>\n                                <td>${res.status}</td>\n                                <td>${res.body?.message || \"Success\"}</td>\n                              </tr>\n                            `).join(\"\")}\n\n                          </tbody>\n\n                        </table>\n\n                      </div>\n\n                    ${route.response[0].body} ?? ${route.response.map(res => `\n\n                        <div class=\"json-preview\">\n\n                          <div class=\"json-title\">\n                            Response ${res.status}\n                          </div>\n\n                            <pre>${JSON.stringify(res.body, null, 2)}</pre>\n\n                        </div>\n\n                      `).join(\"\")}\n\n                    </div>\n                  `\n                  : \"\"\n              }\n\n              ${\n                hasErrors\n                  ? `\n                    <div class=\"section\">\n\n                      <div class=\"section-title\">\n                        Error Handling\n                      </div>\n\n                      <div class=\"table-wrapper\">\n\n                        <table>\n\n                          <thead>\n                            <tr>\n                              <th>Status</th>\n                              <th>Message</th>\n                            </tr>\n                          </thead>\n\n                          <tbody>\n\n                            ${route.errorHandling.map(err => `\n                              <tr>\n                                <td>${err.status}</td>\n                                <td>${err.message}</td>\n                              </tr>\n                            `).join(\"\")}\n\n                          </tbody>\n\n                        </table>\n\n                      </div>\n\n                    </div>\n                  `\n                  : \"\"\n              }\n\n            </div>\n\n          </section>\n        `;\n\n      }).join(\"\")}\n\n    </section>\n  `;\n\n}).join(\"\");\n\n/* =========================\n   HTML\n========================= */\n\nconst html = `\n<!DOCTYPE html>\n<html lang=\"en\">\n\n<head>\n\n<meta charset=\"UTF-8\"/>\n\n<meta\n  name=\"viewport\"\n  content=\"width=device-width, initial-scale=1.0\"\n/>\n\n<title>${project.name || \"IntelliDoc\"}</title>\n\n<link\n  rel=\"preconnect\"\n  href=\"https://fonts.googleapis.com\"\n/>\n\n<link\n  href=\"https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap\"\n  rel=\"stylesheet\"\n/>\n\n<style>\n\n:root{\n\n  --bg:#f8fafc;\n  --card:#ffffff;\n  --card2:#f1f5f9;\n  --text:#0f172a;\n  --text2:#64748b;\n  --border:#e2e8f0;\n  --sidebar:#ffffff;\n  --hover:#f1f5f9;\n}\n\nbody.dark{\n\n  --bg:#0b1120;\n  --card:#111827;\n  --card2:#172033;\n  --text:#f8fafc;\n  --text2:#94a3b8;\n  --border:rgba(255,255,255,0.08);\n  --sidebar:#111827;\n  --hover:#1e293b;\n}\n\n*{\n  margin:0;\n  padding:0;\n  box-sizing:border-box;\n}\n\nbody{\n\n  font-family:'Inter',sans-serif;\n  background:var(--bg);\n  color:var(--text);\n  overflow-x:hidden;\n}\n\n.layout{\n  display:flex;\n}\n\n.sidebar{\n\n  width:320px;\n  background:var(--sidebar);\n  border-right:1px solid var(--border);\n\n  position:fixed;\n\n  top:0;\n  left:0;\n  bottom:0;\n\n  overflow-y:auto;\n\n  padding:24px;\n\n  z-index:1000;\n\n  transition:.3s;\n}\n\n.logo{\n\n  font-size:32px;\n  font-weight:800;\n  color:#3b82f6;\n}\n\n.logo-sub{\n\n  color:var(--text2);\n  margin:10px 0 30px;\n  line-height:1.7;\n}\n\n.sidebar-group{\n  margin-bottom:28px;\n}\n\n.sidebar-group-title{\n\n  font-size:12px;\n  font-weight:700;\n  color:var(--text2);\n  margin-bottom:10px;\n  letter-spacing:1px;\n}\n\n.sidebar-link{\n\n  display:flex;\n  gap:10px;\n  align-items:flex-start;\n\n  padding:12px;\n\n  border-radius:12px;\n\n  text-decoration:none;\n\n  color:var(--text);\n\n  margin-bottom:8px;\n\n  transition:.2s;\n}\n\n.sidebar-link:hover{\n  background:var(--hover);\n}\n\n.sidebar-method{\n\n  padding:6px 10px;\n  border-radius:8px;\n  color:white;\n  font-size:11px;\n  font-weight:700;\n  min-width:60px;\n  text-align:center;\n}\n\n.sidebar-title{\n  font-size:13px;\n  line-height:1.5;\n}\n\n.main{\n\n  margin-left:320px;\n  width:calc(100% - 320px);\n\n  padding:30px;\n}\n\n.header{\n\n  background:var(--card);\n\n  border:1px solid var(--border);\n\n  border-radius:22px;\n\n  padding:30px;\n\n  margin-bottom:30px;\n}\n\n.title{\n\n  font-size:42px;\n  font-weight:800;\n  margin-bottom:12px;\n}\n\n.subtitle{\n\n  color:var(--text2);\n  line-height:1.8;\n}\n\n.stats{\n\n  display:grid;\n\n  grid-template-columns:\n    repeat(auto-fit,minmax(220px,1fr));\n\n  gap:18px;\n\n  margin-top:30px;\n}\n\n.stat-card{\n\n  background:var(--card2);\n\n  border:1px solid var(--border);\n\n  border-radius:18px;\n\n  padding:20px;\n}\n\n.stat-number{\n\n  font-size:34px;\n  font-weight:800;\n  margin-bottom:8px;\n}\n\n.stat-label{\n  color:var(--text2);\n}\n\n.group-section{\n  margin-bottom:40px;\n}\n\n.group-header{\n\n  display:flex;\n  justify-content:space-between;\n  align-items:center;\n\n  margin-bottom:20px;\n}\n\n.group-title{\n\n  font-size:24px;\n  font-weight:800;\n}\n\n.group-subtitle{\n  color:var(--text2);\n  margin-top:4px;\n}\n\n.group-count{\n\n  background:#3b82f6;\n  color:white;\n\n  padding:10px 16px;\n\n  border-radius:12px;\n\n  font-size:13px;\n  font-weight:700;\n}\n\n.endpoint{\n\n  background:var(--card);\n\n  border:1px solid var(--border);\n\n  border-radius:20px;\n\n  overflow:hidden;\n\n  margin-bottom:22px;\n}\n\n.endpoint-bar{\n\n  padding:22px;\n\n  background:var(--card2);\n\n  border-bottom:1px solid var(--border);\n}\n\n.endpoint-main{\n\n  display:flex;\n  gap:16px;\n}\n\n.method-badge{\n\n  padding:10px 16px;\n\n  border-radius:10px;\n\n  color:white;\n\n  font-size:13px;\n  font-weight:700;\n\n  min-width:90px;\n\n  text-align:center;\n\n  height:fit-content;\n}\n\n.route-path{\n\n  font-size:22px;\n  font-weight:800;\n  margin-bottom:6px;\n  word-break:break-word;\n}\n\n.route-description{\n\n  color:var(--text2);\n  line-height:1.7;\n}\n\n.quick-grid{\n\n  display:grid;\n\n  grid-template-columns:\n    repeat(auto-fit,minmax(220px,1fr));\n\n  gap:16px;\n\n  padding:22px;\n}\n\n.quick-card{\n\n  background:var(--card2);\n\n  border:1px solid var(--border);\n\n  border-radius:16px;\n\n  padding:18px;\n}\n\n.quick-label{\n\n  font-size:12px;\n  color:var(--text2);\n  margin-bottom:8px;\n}\n\n.quick-value{\n  line-height:1.7;\n}\n\n.sections-grid{\n\n  display:grid;\n\n  grid-template-columns:\n    repeat(2,minmax(0,1fr));\n\n  gap:18px;\n\n  padding:0 22px 22px;\n}\n\n.section{\n\n  background:var(--card2);\n\n  border:1px solid var(--border);\n\n  border-radius:18px;\n\n  overflow:hidden;\n}\n\n.section-title{\n\n  padding:16px 18px;\n\n  border-bottom:1px solid var(--border);\n\n  font-weight:700;\n}\n\n.table-wrapper{\n  overflow:auto;\n}\n\ntable{\n\n  width:100%;\n  border-collapse:collapse;\n  min-width:400px;\n}\n\nth,td{\n\n  padding:14px;\n  text-align:left;\n  border-bottom:1px solid var(--border);\n}\n\nth{\n\n  font-size:13px;\n  color:var(--text2);\n}\n\n.json-preview{\n\n  margin:16px;\n\n  border-radius:16px;\n\n  overflow:hidden;\n\n  background:#020617;\n}\n\n.json-title{\n\n  padding:12px 16px;\n\n  background:#111827;\n\n  color:white;\n\n  font-size:13px;\n  font-weight:700;\n}\n\n.json-preview pre{\n\n  padding:18px;\n\n  overflow:auto;\n\n  color:#e2e8f0;\n\n  font-size:13px;\n\n  line-height:1.7;\n}\n\n.mobile-topbar{\n\n  display:none;\n}\n\n.overlay{\n  display:none;\n}\n\n@media(max-width:1024px){\n\n  .sections-grid{\n    grid-template-columns:1fr;\n  }\n\n}\n\n@media(max-width:768px){\n\n  .mobile-topbar{\n\n    display:flex;\n\n    position:fixed;\n\n    top:0;\n    left:0;\n    right:0;\n\n    height:70px;\n\n    background:var(--card);\n\n    border-bottom:1px solid var(--border);\n\n    align-items:center;\n\n    justify-content:space-between;\n\n    padding:0 20px;\n\n    z-index:2000;\n  }\n\n  .sidebar{\n\n    transform:translateX(-100%);\n  }\n\n  .sidebar.active{\n    transform:translateX(0);\n  }\n\n  .overlay.active{\n\n    display:block;\n\n    position:fixed;\n\n    inset:0;\n\n    background:rgba(0,0,0,0.5);\n\n    z-index:1500;\n  }\n\n  .main{\n\n    margin-left:0;\n    width:100%;\n\n    padding:90px 16px 20px;\n  }\n\n  .title{\n    font-size:32px;\n  }\n\n  .group-header{\n\n    flex-direction:column;\n    align-items:flex-start;\n    gap:12px;\n  }\n\n  .endpoint-main{\n    flex-direction:column;\n  }\n\n}\n\n</style>\n\n</head>\n\n<body>\n\n<div class=\"mobile-topbar\">\n\n  <div class=\"logo\">\n    IntelliDoc\n  </div>\n\n  <button id=\"menuBtn\">\n    ☰\n  </button>\n\n</div>\n\n<div class=\"overlay\" id=\"overlay\"></div>\n\n<div class=\"layout\">\n\n  <aside class=\"sidebar\" id=\"sidebar\">\n\n    <div class=\"logo\">\n      IntelliDoc\n    </div>\n\n    <div class=\"logo-sub\">\n      Smart API Documentation Generator\n    </div>\n\n    ${sidebarLinks}\n\n  </aside>\n\n  <main class=\"main\">\n\n    <header class=\"header\">\n\n      <h1 class=\"title\">\n        ${project.name || \"API Documentation\"}\n      </h1>\n\n      <div class=\"subtitle\">\n\n        <div>\n          <strong>Base URL:</strong>\n          ${project.baseUrl || \"N/A\"}\n        </div>\n\n        <div>\n          <strong>Version:</strong>\n          ${project.version || \"1.0.0\"}\n        </div>\n\n      </div>\n\n      <div class=\"stats\">\n\n        <div class=\"stat-card\">\n\n          <div class=\"stat-number\">\n            ${totalGroups}\n          </div>\n\n          <div class=\"stat-label\">\n            Route Modules\n          </div>\n\n        </div>\n\n        <div class=\"stat-card\">\n\n          <div class=\"stat-number\">\n            ${totalEndpoints}\n          </div>\n\n          <div class=\"stat-label\">\n            Total Endpoints\n          </div>\n\n        </div>\n\n      </div>\n\n    </header>\n\n    ${routesHtml}\n\n  </main>\n\n</div>\n\n<script>\n\nconst menuBtn =\n  document.getElementById(\"menuBtn\");\n\nconst sidebar =\n  document.getElementById(\"sidebar\");\n\nconst overlay =\n  document.getElementById(\"overlay\");\n\nmenuBtn?.addEventListener(\"click\", () => {\n\n  sidebar.classList.add(\"active\");\n\n  overlay.classList.add(\"active\");\n\n});\n\noverlay?.addEventListener(\"click\", () => {\n\n  sidebar.classList.remove(\"active\");\n\n  overlay.classList.remove(\"active\");\n\n});\n\n</script>\n\n</body>\n</html>\n`;\n\nconst projectName =\n  $input.first().json.project?.name || \"project\";\n\nconst fileName =\n  `${projectName}-api-docs-${$now.toMillis()}.html`;\n\nreturn [\n  {\n    json: {\n      html,\n      project,\n      content: Buffer.from(html, 'utf8').toString('base64'),\n      fileName,\n      routes\n    },\n    binary: {\n      data: await this.helpers.prepareBinaryData(\n        Buffer.from(html, \"utf8\"),\n        fileName,\n        \"text/html\"\n      )\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1648,
+        736
+      ],
+      "id": "b1d1f54b-5e2c-435c-a85f-cd216df8366b",
+      "name": "Convert to HTML",
+      "executeOnce": false
+    },
+    {
+      "parameters": {
+        "resume": "form",
+        "formTitle": "Next API Route Confirmation",
+        "formDescription": "=<h2>📄 Documentation Generated Successfully</h2>\n\n<p style=\"color:orange;\">\n⏳ GitHub Pages may take up to 1 minute to publish.\nIf the page shows 404, wait a few seconds and refresh.\n</p>\n<p>\n<a\n  href=\"https://bhargavbhalala189.github.io/intellidoc-docs/{{$json.content.name}}\"\n  target=\"_blank\"\n>\n  Open Documentation\n</a>\n</p>",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Continue to next route?",
+              "fieldType": "radio",
+              "defaultValue": "Yes",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Yes"
+                  },
+                  {
+                    "option": "Stop Here"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "limitWaitTime": true,
+        "resumeAmount": 2,
+        "resumeUnit": "minutes",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2080,
+        736
+      ],
+      "id": "1d0986c6-afdf-4ad4-8587-964abc493ee3",
+      "name": "Wait",
+      "webhookId": "af0243db-7abf-4519-81e4-32f32a39ff78"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "27ed2216-b8be-4cb8-8f84-880d7d5a0814",
+              "leftValue": "={{ $json[\"Continue to next route?\"] }}",
+              "rightValue": "Yes",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "1b0a81d2-acd7-4d46-bd2d-1673e1068551",
+              "leftValue": "={{$json.content.name}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2272,
+        880
+      ],
+      "id": "2130e293-044f-48fc-abd3-891c50e11e8b",
+      "name": "Continue"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Analyze the provided backend API codebase built with {{$('Detect language and Framework').first().json.language}} and {{$('Detect language and Framework').first().json.framework}}. Generate structured JSON for all API endpoints.\n\nExtract:\n\n* routeName\n* routePath\n* method\n* description\n* middleware / guards / interceptors\n* params\n* query\n* requestBody\n* response\n* errorHandling\n* authentication\n* authorization\n\nRules:\n\n* Detect routes/methods from framework structure.\n* Infer descriptions from handlers/services/business logic.\n* Detect auth/authz from JWT, sessions, middleware, RBAC, guards, etc.\n* Extract path params, query params, and body fields.\n* Infer responses/errors from status codes, return values, validations, exceptions, and try/catch blocks.\n* Use `[]` or `null` if missing.\n* Merge duplicate related files globally.\n* Return ONLY valid JSON.\n\nOutput format:\n\n{\n  \"project\": { \n    \"name\": \"Project Name\", \n    \"baseUrl\": \"http://localhost:3000\", \n    \"version\": \"1.0.0\"\n   },\n  \"routes\": [{\n   \"routeName\": order or product (name of actual route),\n   \"routeFilePath\": actual file path (routes/cart.js),\n   \"endpoints\": [{\n      \"routePath\": \"/example/:id\",\n      \"method\": \"GET\",\n      \"description\": \"Get resource by ID\",\n      \"middleware\": [\"authMiddleware\"],\n      \"params\": [{ \"name\": \"id\", \"type\": \"string\", \"required\": true, \"description\": \"Product ID\" }],\n      \"query\": [ { \"name\": \"populate\", \"type\": \"boolean\", \"required\": false } ],\n      \"requestBody\": [],\n      \"response\": [\n        {\n          \"status\": 200,\n          \"description\": \"Success\",\n          \"body\": null\n        }\n      ],\n      \"errorHandling\": [ { \"status\": 400, \"message\": \"Invalid request\" }],\n      \"authentication\": {\n        \"required\": true, \n        \"type\": \"JWT\"\n      },\n      \"authorization\": {\n        \"required\": true, \n        \"roles\": [ \"admin\", \"user\" ]\n      }\n     \"relatedFilesUsed\": [],\n    },\n   ]\n  }\n}\nBackend API code base:\n{{ JSON.stringify($json, null, 2) }}",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1088,
+        736
+      ],
+      "id": "648617f8-e614-43bb-89a7-50f425e09285",
+      "name": "Structured JSON Gemini AI",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.5-flash-lite",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        1664,
+        368
+      ],
+      "id": "3136b37b-2e29-4c40-a250-c72fedbe32a9",
+      "name": "Google Gemini Chat Model1",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "myueSO1IZZNScyi6",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{\n\t\"language\": \"python\",\n\t\"framework\": \"django\"\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        1904,
+        352
+      ],
+      "id": "858eeb9f-f484-4493-a34a-fe965cf5f3fa",
+      "name": "Structured Output Parser"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Role: You are a senior software architect.\nTask: Analyze the provided dependency code to identify the primary programming language and web framework.\nRequirement: Return only a raw JSON object: {\"language\": \"string\", \"framework\": \"string\"}. No markdown or conversational text.\nDependency-Code: {{ $json.data }}",
+        "hasOutputParser": true,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1728,
+        144
+      ],
+      "id": "9dee15c4-ac7b-4ddc-91a8-60b99579daf0",
+      "name": "Detect language and Framework"
+    },
+    {
+      "parameters": {
+        "content": "## Add github repo and scan the codebase\n1. Add repository link in form\n2. validate that repository link\n3. Fetch metada of repository\n4. Fetch Repository data\n5. Extract Files path from repo\n6. Download dependency files\n7. Detect language and framework using AI\n8. Split code files from repository tree\n9. Download file contents\n10. Prepared analysis for integrate file contents\n11. Categorized routes based on related code",
+        "height": 560,
+        "width": 3072,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -160,
+        -48
+      ],
+      "id": "b121c94b-3356-44a3-839e-3789ec031521",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "## Select Route module and API documentation\n1. Select route module from the form\n2. Fetch selected route's module code\n3. Structured JSON for API document using AI\n4. Parse the structured JSON (AI response)\n5. Convert to HTML using parsed data\n6. Open HTML API document on browser\n7. Open form for continue for select new route or stop",
+        "height": 592,
+        "width": 3072,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -160,
+        544
+      ],
+      "id": "d7d10cda-f981-475e-81bd-c3b7a8418ba1",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.github.com/repos/bhargavbhalala189/intellidoc-docs/contents/docs/{{$json.fileName}}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer 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"
+            },
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"message\": \"Upload generated API documentation\",\n  \"content\": \"{{$json.content}}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1872,
+        736
+      ],
+      "id": "3cb41316-5863-4d7a-bb8b-f94d7639c2bc",
+      "name": "Store API doc into repo",
+      "credentials": {
+        "githubApi": {
+          "id": "RnRxoi1gnqHuUA82",
+          "name": "GitHub account"
+        }
+      },
+      "notes": "It stores file into github and deploy on github pages"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Repository Form": {
+      "main": [
+        [
+          {
+            "node": "Validate Repository URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download File Content1": {
+      "main": [
+        [
+          {
+            "node": "Prepare For Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Categorized routes": {
+      "main": [
+        [
+          {
+            "node": "Select Route Form",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Repository URL": {
+      "main": [
+        [
+          {
+            "node": "Fetch Repository Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Repository Metadata": {
+      "main": [
+        [
+          {
+            "node": "Fetch Repository Tree",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Repository Tree": {
+      "main": [
+        [
+          {
+            "node": "Extract File Paths",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract File Paths": {
+      "main": [
+        [
+          {
+            "node": "Download Dependency File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Dependency File": {
+      "main": [
+        [
+          {
+            "node": "Detect language and Framework",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Code Files": {
+      "main": [
+        [
+          {
+            "node": "Download File Content1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare For Analysis": {
+      "main": [
+        [
+          {
+            "node": "Categorized routes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select Route Form": {
+      "main": [
+        [
+          {
+            "node": "Fetch Selected route's code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Selected route's code": {
+      "main": [
+        [
+          {
+            "node": "Structured JSON Gemini AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Structured JSON Gemini AI",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structure data parser": {
+      "main": [
+        [
+          {
+            "node": "Convert to HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert to HTML": {
+      "main": [
+        [
+          {
+            "node": "Store API doc into repo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Continue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Continue": {
+      "main": [
+        [
+          {
+            "node": "Select Route Form",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured JSON Gemini AI": {
+      "main": [
+        [
+          {
+            "node": "Structure data parser",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Detect language and Framework",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Detect language and Framework",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detect language and Framework": {
+      "main": [
+        [
+          {
+            "node": "Split Code Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store API doc into repo": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "executionTimeout": -1,
+    "availableInMCP": false
+  },
+  "versionId": "270247d0-8718-4a30-b32e-7eefde64ec45",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "920789ff00bec3d30d8f2a434ec964916e0a84c98c11931ee5de23843a1e003d"
+  },
+  "id": "91TLgplVGiHS1KdR",
+  "tags": []
+}
